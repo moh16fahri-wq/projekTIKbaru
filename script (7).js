@@ -348,6 +348,37 @@ function cekAbsensiSiswaHariIni() {
     absensiHariIniSelesai = sudahAbsen;
 }
 
+// FUNGSI UPLOAD FOTO (BARU)
+function uploadFoto() {
+    return new Promise((resolve, reject) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        
+        input.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) {
+                reject('Tidak ada file yang dipilih');
+                return;
+            }
+            
+            if (file.size > 2 * 1024 * 1024) {
+                reject('Ukuran file terlalu besar (max 2MB)');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                resolve(event.target.result);
+            };
+            reader.onerror = () => reject('Gagal membaca file');
+            reader.readAsDataURL(file);
+        };
+        
+        input.click();
+    });
+}
+
 function absen(status) {
     const today = new Date().toISOString().split('T')[0];
     const sudahAbsen = data.absensi.some(a => a.id_siswa == currentUser.id && a.tanggal === today);
@@ -357,12 +388,11 @@ function absen(status) {
     }
 
     if (status === 'sakit') {
-        const fotoNama = prompt('Masukkan nama file foto (simulasi):');
-        if (fotoNama) {
-            prosesAbsensi(status, fotoNama);
-        } else {
-            alert("Foto bukti wajib untuk status sakit!");
-        }
+        uploadFoto().then(fotoBase64 => {
+            prosesAbsensi(status, fotoBase64);
+        }).catch(error => {
+            alert(`Error: ${error}`);
+        });
     } else if (status === 'masuk') {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
@@ -388,7 +418,7 @@ function absen(status) {
     }
 }
 
-function prosesAbsensi(status, fotoNama = null) {
+function prosesAbsensi(status, fotoBase64 = null) {
     const today = new Date().toISOString().split('T')[0];
     const waktu = new Date().toTimeString().split(' ')[0];
     
@@ -400,7 +430,7 @@ function prosesAbsensi(status, fotoNama = null) {
         status: status,
         tanggal: today,
         waktu: waktu,
-        keterangan: fotoNama || ''
+        foto: fotoBase64 || null
     });
     
     saveData();
@@ -558,7 +588,7 @@ function renderDaftarTugas() {
     let html = "";
     tugasSiswa.forEach(t => {
         const submission = t.submissions ? t.submissions.find(s => s.id_siswa === currentUser.id) : null;
-        const submissionHTML = submission ? `<div class="submission-status"><p style="color:green;"><strong>✔ Anda sudah mengumpulkan.</strong></p>${submission.nilai !== null ? `<p class="grade-display"><strong>Nilai: ${submission.nilai}</strong></p><p class="feedback-display"><em>Feedback: ${submission.feedback}</em></p>` : `<p>Menunggu penilaian...</p>`}</div>` : `<button onclick="submitTugas(${t.id})">Kirim Tugas</button>`;
+        const submissionHTML = submission ? `<div class="submission-status"><p style="color:green;"><strong>✓ Anda sudah mengumpulkan.</strong></p>${submission.nilai !== null ? `<p class="grade-display"><strong>Nilai: ${submission.nilai}</strong></p><p class="feedback-display"><em>Feedback: ${submission.feedback}</em></p>` : `<p>Menunggu penilaian...</p>`}</div>` : `<button onclick="submitTugas(${t.id})">Kirim Tugas</button>`;
         html += `<div class="task-card"><div class="task-header"><span><strong>${t.judul}</strong> - ${t.nama_guru}</span><span class="task-deadline">Deadline: ${t.deadline}</span></div><p>${t.deskripsi}</p><p><em>Mata Pelajaran: ${t.mapel || 'Umum'}</em></p>${submissionHTML}${renderDiskusi(t.id)}</div>`;
     });
     container.innerHTML = html;
@@ -813,18 +843,56 @@ function renderAdminAbsensi() {
     if (data.absensi.length === 0) {
         html += "<p>Belum ada data absensi.</p>";
     } else {
-        html += `<table><tr><th>Tanggal</th><th>Nama</th><th>Kelas</th><th>Status</th><th>Waktu</th></tr>`;
+        html += `<table><tr><th>Tanggal</th><th>Nama</th><th>Kelas</th><th>Status</th><th>Waktu</th><th>Bukti Foto</th></tr>`;
         [...data.absensi].reverse().forEach(a => {
             const siswa = data.users.siswas.find(s => s.id == a.id_siswa);
             const namaKelas = siswa ? data.kelas.find(k => k.id === siswa.id_kelas)?.nama || "-" : "-";
             const namaSiswa = a.nama_siswa || (siswa ? siswa.nama : "Unknown");
-            html += `<tr><td>${a.tanggal}</td><td>${namaSiswa}</td><td>${namaKelas}</td><td>${a.status}</td><td>${a.waktu || '-'}</td></tr>`;
+            const fotoButton = a.foto ? `<button class="small-btn" onclick="lihatFoto(${a.id})">👁️ Lihat Foto</button>` : '-';
+            html += `<tr><td>${a.tanggal}</td><td>${namaSiswa}</td><td>${namaKelas}</td><td>${a.status}</td><td>${a.waktu || '-'}</td><td>${fotoButton}</td></tr>`;
         });
         html += "</table>";
     }
     
     html += "</div>";
     container.innerHTML = html;
+}
+
+// FUNGSI LIHAT FOTO (BARU)
+function lihatFoto(idAbsensi) {
+    const absensi = data.absensi.find(a => a.id === idAbsensi);
+    if (!absensi || !absensi.foto) {
+        alert("Foto tidak ditemukan!");
+        return;
+    }
+    
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        cursor: pointer;
+    `;
+    
+    const img = document.createElement('img');
+    img.src = absensi.foto;
+    img.style.cssText = `
+        max-width: 90%;
+        max-height: 90%;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    `;
+    
+    modal.appendChild(img);
+    modal.onclick = () => document.body.removeChild(modal);
+    document.body.appendChild(modal);
 }
 
 function renderAdminManajemen() {
@@ -850,9 +918,16 @@ function renderAdminManajemen() {
         </div>
         <div class="dashboard-section">
             <h4>👨‍🏫 Manajemen Guru</h4>
+            <div class="form-container">
+                <h5>Tambah Guru Baru</h5>
+                <input type="text" id="new-guru-nama" placeholder="Nama Guru">
+                <input type="email" id="new-guru-email" placeholder="Email">
+                <input type="password" id="new-guru-pass" placeholder="Password">
+                <button onclick="tambahGuru()">Tambah Guru</button>
+            </div>
             <table>
-                <tr><th>ID</th><th>Nama</th><th>Email</th></tr>
-                ${data.users.gurus.map(g => `<tr><td>${g.id}</td><td>${g.nama}</td><td>${g.email}</td></tr>`).join("")}
+                <tr><th>ID</th><th>Nama</th><th>Email</th><th>Aksi</th></tr>
+                ${data.users.gurus.map(g => `<tr><td>${g.id}</td><td>${g.nama}</td><td>${g.email}</td><td><button class="small-btn delete" onclick="hapusGuru(${g.id})">Hapus</button></td></tr>`).join("")}
             </table>
         </div>
     `;
@@ -890,6 +965,40 @@ function hapusSiswa(id) {
     data.users.siswas = data.users.siswas.filter(s => s.id !== id);
     saveData();
     alert("Siswa berhasil dihapus!");
+    renderAdminManajemen();
+}
+
+// FUNGSI MANAJEMEN GURU (BARU)
+function tambahGuru() {
+    const nama = document.getElementById("new-guru-nama").value;
+    const email = document.getElementById("new-guru-email").value;
+    const password = document.getElementById("new-guru-pass").value;
+    
+    if (!nama || !email || !password) return alert("Semua field harus diisi!");
+    
+    if (data.users.gurus.some(g => g.email === email)) {
+        return alert("Email sudah terdaftar!");
+    }
+    
+    data.users.gurus.push({
+        id: Date.now(),
+        nama: nama,
+        email: email,
+        password: password,
+        jadwal: []
+    });
+    
+    saveData();
+    alert("Guru berhasil ditambahkan!");
+    renderAdminManajemen();
+}
+
+function hapusGuru(id) {
+    if (!confirm("Yakin ingin menghapus guru ini?")) return;
+    
+    data.users.gurus = data.users.gurus.filter(g => g.id !== id);
+    saveData();
+    alert("Guru berhasil dihapus!");
     renderAdminManajemen();
 }
 
